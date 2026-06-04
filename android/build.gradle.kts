@@ -29,7 +29,7 @@ subprojects {
             finalizeDsl { extension ->
                 extension.compileSdk = 37
                 extension.defaultConfig {
-                    minSdk = 24
+                    minSdk = 23
                     targetSdk = 37
                 }
             }
