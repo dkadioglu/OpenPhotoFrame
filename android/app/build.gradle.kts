@@ -40,7 +40,7 @@ android {
         applicationId = "io.github.micw.openphotoframe"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 24
+        minSdk = 23
         targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
