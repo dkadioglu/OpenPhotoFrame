@@ -53,7 +53,7 @@ dependencies:
   intl: ^0.20.2
 
 dependency_overrides:
-  shared_preferences_android: 2.2.2
+  shared_preferences_android: 2.2.3
   flutter_plugin_android_lifecycle: 2.0.21
 
 dev_dependencies:
