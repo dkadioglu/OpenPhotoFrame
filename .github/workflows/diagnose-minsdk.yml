@@ -26,16 +26,20 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get
 
-      - name: Verify Android Gradle wrapper exists
+      - name: Verify tools and Android project files
         run: |
+          java -version
+          gradle --version
+          flutter --version
           ls -la
           ls -la android
-          test -f android/gradlew
-          chmod +x android/gradlew
+          test -f android/settings.gradle.kts
+          test -f android/build.gradle.kts
+          test -f android/app/build.gradle.kts
 
       - name: Gradle dependency tree (debugRuntimeClasspath)
         run: |
-          ./android/gradlew -p android :app:dependencies \
+          gradle -p android :app:dependencies \
             --configuration debugRuntimeClasspath \
             --no-daemon \
             2>&1 | tee /tmp/dependency-tree.txt
@@ -44,7 +48,7 @@ jobs:
 
       - name: Gradle dependency insight - photo_manager
         run: |
-          ./android/gradlew -p android :app:dependencyInsight \
+          gradle -p android :app:dependencyInsight \
             --configuration debugRuntimeClasspath \
             --dependency "photo_manager" \
             --no-daemon \
@@ -52,7 +56,7 @@ jobs:
 
       - name: Gradle dependency insight - permission_handler
         run: |
-          ./android/gradlew -p android :app:dependencyInsight \
+          gradle -p android :app:dependencyInsight \
             --configuration debugRuntimeClasspath \
             --dependency "permission_handler" \
             --no-daemon \
@@ -60,7 +64,7 @@ jobs:
 
       - name: Gradle dependency insight - file_picker
         run: |
-          ./android/gradlew -p android :app:dependencyInsight \
+          gradle -p android :app:dependencyInsight \
             --configuration debugRuntimeClasspath \
             --dependency "file_picker" \
             --no-daemon \
@@ -68,7 +72,7 @@ jobs:
 
       - name: Process debug manifest
         run: |
-          ./android/gradlew -p android :app:processDebugManifest \
+          gradle -p android :app:processDebugManifest \
             --no-daemon \
             --info \
             2>&1 | tee /tmp/process-manifest.txt
@@ -78,7 +82,7 @@ jobs:
 
       - name: Assemble debug APK
         run: |
-          ./android/gradlew -p android :app:assembleDebug \
+          gradle -p android :app:assembleDebug \
             --no-daemon \
             --stacktrace \
             --info \
@@ -134,6 +138,8 @@ jobs:
           find android/app/build/intermediates -path "*merged_manifests*" -name "AndroidManifest.xml" \
             -exec sh -c 'cp "$1" "/tmp/minsdk-diagnostics/$(basename "$(dirname "$1")")-AndroidManifest.xml"' _ {} \; 2>/dev/null || true
 
+          ls -la /tmp/minsdk-diagnostics || true
+
       - name: Upload diagnostic artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -141,3 +147,4 @@ jobs:
           name: minsdk-diagnostics
           path: /tmp/minsdk-diagnostics/
           retention-days: 14
+          if-no-files-found: warn
