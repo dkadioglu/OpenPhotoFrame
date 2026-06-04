@@ -14,62 +14,71 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.41.6'
-          channel: 'stable'
+          flutter-version: "3.41.6"
+          channel: "stable"
 
       - name: Get Flutter dependencies
         run: flutter pub get
 
-      - name: Gradle dependency tree (debugRuntimeClasspath)
-        working-directory: android
+      - name: Verify Android Gradle wrapper exists
         run: |
-          ./gradlew :app:dependencies \
+          ls -la
+          ls -la android
+          test -f android/gradlew
+          chmod +x android/gradlew
+
+      - name: Gradle dependency tree (debugRuntimeClasspath)
+        run: |
+          ./android/gradlew -p android :app:dependencies \
             --configuration debugRuntimeClasspath \
             --no-daemon \
             2>&1 | tee /tmp/dependency-tree.txt
           echo "--- Lines mentioning minSdk ---"
           grep -i "minsdk\|min-sdk\|min_sdk" /tmp/dependency-tree.txt || true
 
-      - name: Gradle dependency insight – search for minSdk-24 libraries
-        working-directory: android
+      - name: Gradle dependency insight - photo_manager
         run: |
-          ./gradlew :app:dependencyInsight \
+          ./android/gradlew -p android :app:dependencyInsight \
             --configuration debugRuntimeClasspath \
             --dependency "photo_manager" \
             --no-daemon \
             2>&1 | tee /tmp/insight-photo_manager.txt || true
-          ./gradlew :app:dependencyInsight \
+
+      - name: Gradle dependency insight - permission_handler
+        run: |
+          ./android/gradlew -p android :app:dependencyInsight \
             --configuration debugRuntimeClasspath \
             --dependency "permission_handler" \
             --no-daemon \
             2>&1 | tee /tmp/insight-permission_handler.txt || true
-          ./gradlew :app:dependencyInsight \
+
+      - name: Gradle dependency insight - file_picker
+        run: |
+          ./android/gradlew -p android :app:dependencyInsight \
             --configuration debugRuntimeClasspath \
             --dependency "file_picker" \
             --no-daemon \
             2>&1 | tee /tmp/insight-file_picker.txt || true
 
       - name: Process debug manifest
-        working-directory: android
         run: |
-          ./gradlew :app:processDebugManifest \
+          ./android/gradlew -p android :app:processDebugManifest \
             --no-daemon \
             --info \
             2>&1 | tee /tmp/process-manifest.txt
           echo "--- Lines mentioning minSdk or uses-sdk ---"
-          grep -i "minsdk\|min-sdk\|uses-sdk\|minSdkVersion\|Merging.*manifest\|manifest.*conflict\|ERROR\|WARNING" \
+          grep -i "minsdk\|min-sdk\|uses-sdk\|minSdkVersion\|Merging.*manifest\|manifest.*conflict\|cannot be smaller than version\|ERROR\|WARNING" \
             /tmp/process-manifest.txt || true
 
-      - name: Assemble debug APK (surfaces minSdk conflicts during full build)
-        working-directory: android
+      - name: Assemble debug APK
         run: |
-          ./gradlew :app:assembleDebug \
+          ./android/gradlew -p android :app:assembleDebug \
             --no-daemon \
             --stacktrace \
             --info \
@@ -78,13 +87,15 @@ jobs:
           grep -i "minsdk\|min-sdk\|uses-sdk\|minSdkVersion\|manifest.*conflict\|cannot be smaller than version\|ERROR\|WARNING" \
             /tmp/assemble-debug.txt || true
 
-      - name: Show merged manifest
+      - name: Show merged manifests
+        if: always()
         run: |
           FOUND=0
           while IFS= read -r manifest; do
             FOUND=1
             echo "=== $manifest ==="
             cat "$manifest"
+            echo
           done < <(find android/app/build/intermediates -path "*merged_manifests*" -name "AndroidManifest.xml" 2>/dev/null | sort)
 
           if [[ "$FOUND" -eq 0 ]]; then
@@ -93,13 +104,15 @@ jobs:
           fi
 
       - name: Show manifest merger reports
+        if: always()
         run: |
           FOUND=0
           while IFS= read -r report; do
             FOUND=1
             echo "=== $report ==="
             cat "$report"
-          done < <(find android/app/build -path "*outputs/logs*" -type f \( -name "*manifest*" -o -name "*merger*" \) 2>/dev/null | sort)
+            echo
+          done < <(find android/app/build -path "*outputs/logs*" -type f \( -name "*manifest*" -o -name "*merger*" -o -name "*.txt" \) 2>/dev/null | sort)
 
           if [[ "$FOUND" -eq 0 ]]; then
             echo "Manifest merger report not found; listing available log files:"
@@ -114,10 +127,12 @@ jobs:
           cp /tmp/process-manifest.txt /tmp/minsdk-diagnostics/ 2>/dev/null || true
           cp /tmp/assemble-debug.txt /tmp/minsdk-diagnostics/ 2>/dev/null || true
           cp /tmp/insight-*.txt /tmp/minsdk-diagnostics/ 2>/dev/null || true
-          find android/app/build -path "*outputs/logs*" -type f \( -name "*manifest*" -o -name "*merger*" \) \
+
+          find android/app/build -path "*outputs/logs*" -type f \
             -exec cp {} /tmp/minsdk-diagnostics/ \; 2>/dev/null || true
+
           find android/app/build/intermediates -path "*merged_manifests*" -name "AndroidManifest.xml" \
-            -exec cp {} /tmp/minsdk-diagnostics/ \; 2>/dev/null || true
+            -exec sh -c 'cp "$1" "/tmp/minsdk-diagnostics/$(basename "$(dirname "$1")")-AndroidManifest.xml"' _ {} \; 2>/dev/null || true
 
       - name: Upload diagnostic artifacts
         if: always()
