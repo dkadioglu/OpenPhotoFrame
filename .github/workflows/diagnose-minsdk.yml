@@ -55,7 +55,7 @@ jobs:
             --no-daemon \
             2>&1 | tee /tmp/insight-file_picker.txt || true
 
-      - name: Build debug APK (produces manifest merger log)
+      - name: Process debug manifest
         working-directory: android
         run: |
           ./gradlew :app:processDebugManifest \
@@ -66,26 +66,44 @@ jobs:
           grep -i "minsdk\|min-sdk\|uses-sdk\|minSdkVersion\|Merging.*manifest\|manifest.*conflict\|ERROR\|WARNING" \
             /tmp/process-manifest.txt || true
 
+      - name: Assemble debug APK (surfaces minSdk conflicts during full build)
+        working-directory: android
+        run: |
+          ./gradlew :app:assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --info \
+            2>&1 | tee /tmp/assemble-debug.txt || true
+          echo "--- Lines mentioning minSdk or uses-sdk during assembleDebug ---"
+          grep -i "minsdk\|min-sdk\|uses-sdk\|minSdkVersion\|manifest.*conflict\|cannot be smaller than version\|ERROR\|WARNING" \
+            /tmp/assemble-debug.txt || true
+
       - name: Show merged manifest
         run: |
-          MERGED="android/app/build/intermediates/merged_manifests/debug/processDebugManifest/merged/AndroidManifest.xml"
-          if [[ -f "$MERGED" ]]; then
-            echo "=== Merged AndroidManifest.xml ==="
-            cat "$MERGED"
-          else
-            echo "Merged manifest not found at expected path; listing candidates:"
+          FOUND=0
+          while IFS= read -r manifest; do
+            FOUND=1
+            echo "=== $manifest ==="
+            cat "$manifest"
+          done < <(find android/app/build/intermediates -path "*merged_manifests*" -name "AndroidManifest.xml" 2>/dev/null | sort)
+
+          if [[ "$FOUND" -eq 0 ]]; then
+            echo "Merged manifest not found; listing candidates under android/app/build:"
             find android/app/build -name "AndroidManifest.xml" 2>/dev/null || true
           fi
 
-      - name: Show manifest merger report
+      - name: Show manifest merger reports
         run: |
-          REPORT="android/app/build/outputs/logs/manifest-merger-debug-report.txt"
-          if [[ -f "$REPORT" ]]; then
-            echo "=== manifest-merger-debug-report.txt ==="
-            cat "$REPORT"
-          else
-            echo "Manifest merger report not found at expected path; listing candidates:"
-            find android/app/build/outputs/logs -type f 2>/dev/null || true
+          FOUND=0
+          while IFS= read -r report; do
+            FOUND=1
+            echo "=== $report ==="
+            cat "$report"
+          done < <(find android/app/build -path "*outputs/logs*" -type f \( -name "*manifest*" -o -name "*merger*" \) 2>/dev/null | sort)
+
+          if [[ "$FOUND" -eq 0 ]]; then
+            echo "Manifest merger report not found; listing available log files:"
+            find android/app/build -path "*outputs/logs*" -type f 2>/dev/null || true
           fi
 
       - name: Collect diagnostic artifacts
@@ -94,13 +112,12 @@ jobs:
           mkdir -p /tmp/minsdk-diagnostics
           cp /tmp/dependency-tree.txt /tmp/minsdk-diagnostics/ 2>/dev/null || true
           cp /tmp/process-manifest.txt /tmp/minsdk-diagnostics/ 2>/dev/null || true
+          cp /tmp/assemble-debug.txt /tmp/minsdk-diagnostics/ 2>/dev/null || true
           cp /tmp/insight-*.txt /tmp/minsdk-diagnostics/ 2>/dev/null || true
-          # Manifest merger report
-          REPORT="android/app/build/outputs/logs/manifest-merger-debug-report.txt"
-          [[ -f "$REPORT" ]] && cp "$REPORT" /tmp/minsdk-diagnostics/ || true
-          # Merged manifest
-          find android/app/build/intermediates/merged_manifests -name "AndroidManifest.xml" \
-            -exec cp {} /tmp/minsdk-diagnostics/merged-AndroidManifest.xml \; 2>/dev/null || true
+          find android/app/build -path "*outputs/logs*" -type f \( -name "*manifest*" -o -name "*merger*" \) \
+            -exec cp {} /tmp/minsdk-diagnostics/ \; 2>/dev/null || true
+          find android/app/build/intermediates -path "*merged_manifests*" -name "AndroidManifest.xml" \
+            -exec cp {} /tmp/minsdk-diagnostics/ \; 2>/dev/null || true
 
       - name: Upload diagnostic artifacts
         if: always()
