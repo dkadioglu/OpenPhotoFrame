@@ -114,7 +114,24 @@ class MockConfigProvider extends ChangeNotifier implements ConfigProvider {
   bool get keepAliveEnabled => false;
   @override
   set keepAliveEnabled(bool value) {}
-  
+
+  @override
+  bool get autoUpdateEnabled => false;
+  @override
+  set autoUpdateEnabled(bool value) {}
+  @override
+  bool get autoUpdateSilent => false;
+  @override
+  set autoUpdateSilent(bool value) {}
+  @override
+  String? get autoUpdateSkippedVersion => null;
+  @override
+  set autoUpdateSkippedVersion(String? value) {}
+  @override
+  DateTime? get autoUpdateLastCheck => null;
+  @override
+  set autoUpdateLastCheck(DateTime? value) {}
+
   @override
   bool get showClock => false;
   @override
@@ -222,7 +239,10 @@ class MockSyncProvider implements SyncProvider {
   String get id => 'mock';
   
   @override
-  Future<void> sync({bool deleteOrphanedFiles = false}) async {
+  Future<void> sync({
+    bool deleteOrphanedFiles = false,
+    SyncProgressCallback? onProgress,
+  }) async {
     syncCallCount++;
   }
 }

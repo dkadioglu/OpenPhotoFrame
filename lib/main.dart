@@ -15,21 +15,32 @@ import 'domain/interfaces/display_controller.dart';
 import 'infrastructure/services/app_initializer.dart';
 import 'infrastructure/services/json_config_service.dart';
 import 'infrastructure/services/exif_metadata_provider.dart';
-import 'infrastructure/services/nextcloud_source_config.dart';
-import 'infrastructure/services/nextcloud_sync_service.dart';
+import 'infrastructure/services/webdav_source_config.dart';
+import 'infrastructure/services/webdav_sync_service.dart';
 import 'infrastructure/services/noop_sync_service.dart';
 import 'infrastructure/services/photo_service.dart';
 import 'infrastructure/services/local_storage_provider.dart';
 import 'infrastructure/services/native_display_controller.dart';
+import 'infrastructure/services/update_service.dart';
 import 'infrastructure/repositories/hybrid_photo_repository.dart';
 import 'infrastructure/strategies/weighted_freshness_strategy.dart';
+import 'ui/dialogs/update_dialog.dart';
 import 'ui/screens/slideshow_screen.dart';
+
+/// Used by the auto-updater to show the update prompt over the running app.
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   // Setup Logging
   Logger.root.level = Level.ALL;
   Logger.root.onRecord.listen((record) {
     print('${record.level.name}: ${record.time}: ${record.message}');
+    if (record.error != null) {
+      print('ERROR: ${record.error}');
+    }
+    if (record.stackTrace != null) {
+      print(record.stackTrace);
+    }
   });
 
   WidgetsFlutterBinding.ensureInitialized();
@@ -95,32 +106,28 @@ class OpenPhotoFrameApp extends StatelessWidget {
         // 2. Application Services (Dependent on Infrastructure)
         // Note: SyncProvider is created dynamically via factory to pick up config changes
         // REUSE existing PhotoService instance
-        ProxyProvider3<StorageProvider, PlaylistStrategy, PhotoRepository, PhotoService>(
-          update: (context, storage, playlist, repo, previous) {
-            if (previous != null) return previous;
-            
+        ChangeNotifierProvider<PhotoService>(
+          create: (context) {
+            final storage = context.read<StorageProvider>();
+            final playlist = context.read<PlaylistStrategy>();
+            final repo = context.read<PhotoRepository>();
             final config = context.read<ConfigProvider>();
-            
+
             // Factory function that creates a SyncProvider with current config
             SyncProvider createSyncProvider() {
               final type = config.activeSourceType;
               final sourceConfig = config.getSourceConfig(type);
 
               if (type == 'nextcloud_link') {
-                final nextcloudConfig = NextcloudSourceConfig.fromMap(sourceConfig);
-                final url = nextcloudConfig.url;
-                if (url.isNotEmpty) {
-                  return NextcloudSyncService.fromPublicLink(
-                    url,
-                    storage,
-                    sourceConfig: nextcloudConfig,
-                  );
+                final webdavConfig = WebDavSourceConfig.fromMap(sourceConfig);
+                if (webdavConfig.url.isNotEmpty) {
+                  return WebDavSyncService.fromConfig(webdavConfig, storage);
                 }
               }
-              
+
               return NoOpSyncService();
             }
-            
+
             return PhotoService(
               syncProviderFactory: createSyncProvider,
               playlistStrategy: playlist,
@@ -129,10 +136,28 @@ class OpenPhotoFrameApp extends StatelessWidget {
               storageProvider: storage,
             );
           },
-          dispose: (_, service) => service.dispose(),
+        ),
+
+        // Opt-in GitHub self-updater (no-op unless enabled in settings)
+        ChangeNotifierProvider<UpdateService>(
+          lazy: false,
+          create: (context) {
+            final service = UpdateService(
+              configProvider: context.read<ConfigProvider>(),
+            );
+            service.onUpdateAvailable = (info) {
+              final navContext = appNavigatorKey.currentContext;
+              if (navContext != null) {
+                showUpdateDialog(navContext, info, service);
+              }
+            };
+            service.start();
+            return service;
+          },
         ),
       ],
       child: MaterialApp(
+        navigatorKey: appNavigatorKey,
         title: 'OpenPhotoFrame',
         localizationsDelegates: const [
           AppLocalizations.delegate,

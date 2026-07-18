@@ -374,6 +374,54 @@ abstract class AppLocalizations {
   /// **'https://cloud.example.com/s/abc123'**
   String get nextcloudUrlHint;
 
+  /// No description provided for @webdavAuthPublicShare.
+  ///
+  /// In en, this message translates to:
+  /// **'Public share'**
+  String get webdavAuthPublicShare;
+
+  /// No description provided for @webdavAuthLogin.
+  ///
+  /// In en, this message translates to:
+  /// **'WebDAV login'**
+  String get webdavAuthLogin;
+
+  /// No description provided for @webdavUrlLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'WebDAV URL'**
+  String get webdavUrlLabel;
+
+  /// No description provided for @webdavUrlHint.
+  ///
+  /// In en, this message translates to:
+  /// **'https://cloud.example.com/remote.php/dav/files/user/'**
+  String get webdavUrlHint;
+
+  /// No description provided for @webdavUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Username'**
+  String get webdavUsername;
+
+  /// No description provided for @webdavPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get webdavPassword;
+
+  /// No description provided for @webdavAllowInvalidCertificate.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept invalid certificate'**
+  String get webdavAllowInvalidCertificate;
+
+  /// No description provided for @webdavAllowInvalidCertificateWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Insecure: only for self-signed certificates on trusted networks.'**
+  String get webdavAllowInvalidCertificateWarning;
+
   /// No description provided for @testConnection.
   ///
   /// In en, this message translates to:
@@ -446,6 +494,12 @@ abstract class AppLocalizations {
   /// **'Images directly in the shared root folder'**
   String get nextcloudShareRootSubtitle;
 
+  /// No description provided for @nextcloudFolderPhotoCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 photo} other{{count} photos}}'**
+  String nextcloudFolderPhotoCount(int count);
+
   /// No description provided for @nextcloudFoldersLoadError.
   ///
   /// In en, this message translates to:
@@ -494,11 +548,77 @@ abstract class AppLocalizations {
   /// **'Sync completed successfully!'**
   String get syncCompletedSuccessfully;
 
+  /// No description provided for @syncCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync cancelled.'**
+  String get syncCancelled;
+
   /// No description provided for @syncError.
   ///
   /// In en, this message translates to:
   /// **'Error: {error}'**
   String syncError(String error);
+
+  /// No description provided for @nextcloudErrorInvalidShareLink.
+  ///
+  /// In en, this message translates to:
+  /// **'The Nextcloud share link is no longer valid.'**
+  String get nextcloudErrorInvalidShareLink;
+
+  /// No description provided for @nextcloudErrorShareInaccessible.
+  ///
+  /// In en, this message translates to:
+  /// **'The Nextcloud share is no longer accessible.'**
+  String get nextcloudErrorShareInaccessible;
+
+  /// No description provided for @nextcloudErrorConnectionTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection to Nextcloud timed out.'**
+  String get nextcloudErrorConnectionTimeout;
+
+  /// No description provided for @nextcloudErrorConnectionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not connect to Nextcloud. Check internet connection and share link.'**
+  String get nextcloudErrorConnectionFailed;
+
+  /// No description provided for @nextcloudErrorDownloadStalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Download timed out after 15 minutes without receiving data.'**
+  String get nextcloudErrorDownloadStalled;
+
+  /// No description provided for @nextcloudErrorInvalidUrlEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'URL is empty.'**
+  String get nextcloudErrorInvalidUrlEmpty;
+
+  /// No description provided for @nextcloudErrorInvalidUrlScheme.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid URL scheme. Use http or https.'**
+  String get nextcloudErrorInvalidUrlScheme;
+
+  /// No description provided for @nextcloudErrorInvalidUrlNoHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid URL. Host is missing.'**
+  String get nextcloudErrorInvalidUrlNoHost;
+
+  /// No description provided for @nextcloudErrorInvalidUrlFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid URL format: {error}'**
+  String nextcloudErrorInvalidUrlFormat(String error);
+
+  /// No description provided for @nextcloudErrorUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Nextcloud sync failed: {error}'**
+  String nextcloudErrorUnknown(String error);
 
   /// No description provided for @neverSynced.
   ///
@@ -667,6 +787,84 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Notification permission is required for Keep App Running'**
   String get notificationPermissionRequired;
+
+  /// No description provided for @autoUpdateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic updates'**
+  String get autoUpdateTitle;
+
+  /// No description provided for @autoUpdateSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check GitHub for new versions and install them'**
+  String get autoUpdateSubtitle;
+
+  /// No description provided for @autoUpdateFdroidNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Only for installs from GitHub. If you installed via F-Droid, leave this off and update through F-Droid.'**
+  String get autoUpdateFdroidNote;
+
+  /// No description provided for @autoUpdateSilentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Install without confirmation'**
+  String get autoUpdateSilentTitle;
+
+  /// No description provided for @autoUpdateSilentSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Device Owner detected: updates can be installed silently in the background.'**
+  String get autoUpdateSilentSubtitle;
+
+  /// No description provided for @autoUpdatePromptNote.
+  ///
+  /// In en, this message translates to:
+  /// **'When an update is available, you\'ll be asked before it is installed.'**
+  String get autoUpdatePromptNote;
+
+  /// No description provided for @autoUpdateCheckNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Check now'**
+  String get autoUpdateCheckNow;
+
+  /// No description provided for @autoUpdateUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re up to date.'**
+  String get autoUpdateUpToDate;
+
+  /// No description provided for @updateAvailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update available'**
+  String get updateAvailableTitle;
+
+  /// No description provided for @updateAvailableMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} is available. Download and install it now?'**
+  String updateAvailableMessage(String version);
+
+  /// No description provided for @updateDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading…'**
+  String get updateDownloading;
+
+  /// No description provided for @updateSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get updateSkip;
+
+  /// No description provided for @updateDownloadInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Download & install'**
+  String get updateDownloadInstall;
 
   /// No description provided for @keepAliveDialogTitle.
   ///

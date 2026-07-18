@@ -42,6 +42,31 @@ For now, build from source (see Development section).
 flutter run -d linux
 ```
 
+## 🔄 Automatic Updates
+
+OpenPhotoFrame can update itself from GitHub releases. It is **opt-in** and **off by default** — enable it at the bottom of **Settings → Automatic updates**. This is only for installs from GitHub; if you installed via F-Droid, leave it off and update through F-Droid instead.
+
+When enabled, the app checks the latest GitHub release roughly every 8 hours:
+
+- **Default:** when a newer version is found you get a prompt to *Skip* or *Download & install*. Android then shows its install confirmation (you may need to allow "Install unknown apps" once).
+- **Silent:** if the app is the device's **Device Owner**, updates download and install silently in the background with no prompt — ideal for a wall-mounted frame you never touch.
+
+### Silent updates via Device Owner
+
+Device Owner is Android's device-management mode. It is what lets the app install updates without any confirmation dialog. It can only be set on a device with **no accounts** (e.g. right after a factory reset), via ADB:
+
+```bash
+adb shell dpm set-device-owner io.github.micw.openphotoframe/.ScreenAdminReceiver
+```
+
+Then enable **Settings → Automatic updates → Install without confirmation**. To remove it again later:
+
+```bash
+adb shell dpm remove-active-admin io.github.micw.openphotoframe/.ScreenAdminReceiver
+```
+
+> Updates only install over an existing app when signed with the same key. The project's reproducible builds ensure the GitHub APKs match the F-Droid signing key, so switching between them keeps your data.
+
 ## 🛠️ Development
 
 ### Requirements

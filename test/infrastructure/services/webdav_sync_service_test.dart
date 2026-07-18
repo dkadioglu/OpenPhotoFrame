@@ -5,9 +5,9 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:logging/logging.dart';
 import 'package:open_photo_frame/domain/interfaces/storage_provider.dart';
-import 'package:open_photo_frame/infrastructure/services/nextcloud_remote_client.dart';
-import 'package:open_photo_frame/infrastructure/services/nextcloud_source_config.dart';
-import 'package:open_photo_frame/infrastructure/services/nextcloud_sync_service.dart';
+import 'package:open_photo_frame/infrastructure/services/webdav_remote_client.dart';
+import 'package:open_photo_frame/infrastructure/services/webdav_source_config.dart';
+import 'package:open_photo_frame/infrastructure/services/webdav_sync_service.dart';
 
 class FakeStorageProvider implements StorageProvider {
   FakeStorageProvider(this.directory);
@@ -24,31 +24,36 @@ class FakeStorageProvider implements StorageProvider {
   Stream<void> get onDirectoryChanged => const Stream.empty();
 }
 
-class FakeNextcloudRemoteClient implements NextcloudRemoteClient {
-  FakeNextcloudRemoteClient({
-    Map<String, List<NextcloudRemoteEntry>> directories = const {},
+class FakeWebDavRemoteClient implements WebDavRemoteClient {
+  FakeWebDavRemoteClient({
+    Map<String, List<WebDavRemoteEntry>> directories = const {},
     Map<String, List<int>> fileContents = const {},
     this.readDirError,
   })  : _directories = directories,
         _fileContents = fileContents;
 
-  final Map<String, List<NextcloudRemoteEntry>> _directories;
+  final Map<String, List<WebDavRemoteEntry>> _directories;
   final Map<String, List<int>> _fileContents;
   final Object? readDirError;
   final List<String> readDirCalls = [];
   final List<String> downloadedPaths = [];
 
   @override
-  Future<List<NextcloudRemoteEntry>> readDir(String path) async {
+  Future<List<WebDavRemoteEntry>> readDir(String path) async {
     readDirCalls.add(path);
     if (readDirError != null) {
       throw readDirError!;
     }
-    return List<NextcloudRemoteEntry>.from(_directories[path] ?? const []);
+    return List<WebDavRemoteEntry>.from(_directories[path] ?? const []);
   }
 
   @override
-  Future<void> downloadFile(String remotePath, String localPath) async {
+  Future<void> downloadFile(
+    String remotePath,
+    String localPath, {
+    void Function(int count, int total)? onProgress,
+    Duration? idleTimeout,
+  }) async {
     downloadedPaths.add(remotePath);
     final file = File(localPath);
     await file.parent.create(recursive: true);
@@ -59,9 +64,9 @@ class FakeNextcloudRemoteClient implements NextcloudRemoteClient {
 }
 
 void main() {
-  group('NextcloudSourceConfig', () {
+  group('WebDavSourceConfig', () {
     test('normalizes root and nested folders', () {
-      final config = NextcloudSourceConfig.fromMap({
+      final config = WebDavSourceConfig.fromMap({
         'url': 'https://cloud.example.com/s/abc',
         'folder_sync_mode': 'selected',
         'selected_folders': ['/', 'albums//summer/'],
@@ -75,9 +80,50 @@ void main() {
       expect(config.includesRelativeFile('albums/summer/photo.jpg'), isTrue);
       expect(config.includesRelativeFile('albums/photo.jpg'), isFalse);
     });
+
+    test('splitInlineCredentials extracts user:pass@host', () {
+      final split = WebDavSourceConfig.splitInlineCredentials(
+        'https://alice:s3cr%40t@cloud.example.com/dav/',
+      );
+      expect(split.url, 'https://cloud.example.com/dav/');
+      expect(split.username, 'alice');
+      expect(split.password, 's3cr@t'); // %40 decoded
+    });
+
+    test('splitInlineCredentials leaves plain URLs untouched', () {
+      final split = WebDavSourceConfig.splitInlineCredentials(
+        'https://cloud.example.com/dav/',
+      );
+      expect(split.url, 'https://cloud.example.com/dav/');
+      expect(split.username, isNull);
+      expect(split.password, isNull);
+    });
+
+    test('resolveTarget uses url + credentials in userPassword mode', () {
+      const config = WebDavSourceConfig(
+        url: 'https://cloud.example.com/remote.php/dav/files/bob/',
+        authMode: WebDavAuthMode.userPassword,
+        username: 'bob',
+        password: 'pw',
+      );
+      final target = WebDavSyncService.resolveTarget(config);
+      expect(target.webDavUrl, 'https://cloud.example.com/remote.php/dav/files/bob/');
+      expect(target.user, 'bob');
+      expect(target.password, 'pw');
+    });
+
+    test('resolveTarget derives webdav endpoint from a public share link', () {
+      const config = WebDavSourceConfig(
+        url: 'https://cloud.example.com/s/abc123',
+      );
+      final target = WebDavSyncService.resolveTarget(config);
+      expect(target.webDavUrl, 'https://cloud.example.com/public.php/webdav');
+      expect(target.user, 'abc123');
+      expect(target.password, '');
+    });
   });
 
-  group('NextcloudSyncService', () {
+  group('WebDavSyncService', () {
     late Directory tempDir;
     late FakeStorageProvider storageProvider;
 
@@ -91,15 +137,16 @@ void main() {
     });
 
     test('fromPublicLink extracts webdav url and token', () {
-      final service = NextcloudSyncService.fromPublicLink(
+      final service = WebDavSyncService.fromPublicLink(
         'https://cloud.example.com/s/abc123',
         storageProvider,
         clientFactory: ({
           required String webDavUrl,
           required String user,
           required String password,
+          bool allowInvalidCertificate = false,
         }) {
-          return FakeNextcloudRemoteClient();
+          return FakeWebDavRemoteClient();
         },
       );
 
@@ -109,10 +156,10 @@ void main() {
     });
 
     test('testConnection lists the root directory', () async {
-      final client = FakeNextcloudRemoteClient(
+      final client = FakeWebDavRemoteClient(
         directories: {
           '/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/folder/',
               name: 'folder',
               isDirectory: true,
@@ -121,12 +168,13 @@ void main() {
         },
       );
 
-      final error = await NextcloudSyncService.testConnection(
-        'https://cloud.example.com/s/abc123',
+      final error = await WebDavSyncService.testConnection(
+        const WebDavSourceConfig(url: 'https://cloud.example.com/s/abc123'),
         clientFactory: ({
           required String webDavUrl,
           required String user,
           required String password,
+          bool allowInvalidCertificate = false,
         }) {
           expect(webDavUrl, 'https://cloud.example.com/public.php/webdav');
           expect(user, 'abc123');
@@ -140,22 +188,22 @@ void main() {
     });
 
     test('listAvailableFolders returns root and nested folders', () async {
-      final client = FakeNextcloudRemoteClient(
+      final client = FakeWebDavRemoteClient(
         directories: {
           '/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/',
               name: 'albums',
               isDirectory: true,
             ),
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/cover.jpg',
               name: 'cover.jpg',
               isDirectory: false,
             ),
           ],
           '/albums/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/summer/',
               name: 'summer',
               isDirectory: true,
@@ -165,12 +213,13 @@ void main() {
         },
       );
 
-      final folders = await NextcloudSyncService.listAvailableFolders(
-        'https://cloud.example.com/s/abc123',
+      final folders = await WebDavSyncService.listAvailableFolders(
+        const WebDavSourceConfig(url: 'https://cloud.example.com/s/abc123'),
         clientFactory: ({
           required String webDavUrl,
           required String user,
           required String password,
+          bool allowInvalidCertificate = false,
         }) => client,
       );
 
@@ -180,28 +229,28 @@ void main() {
 
     test('sync downloads root and nested images with relative paths', () async {
       final modifiedAt = DateTime(2026, 5, 18, 12, 0);
-      final client = FakeNextcloudRemoteClient(
+      final client = FakeWebDavRemoteClient(
         directories: {
           '/': [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/root.jpg',
               name: 'root.jpg',
               isDirectory: false,
               modifiedAt: modifiedAt,
             ),
-            const NextcloudRemoteEntry(
+            const WebDavRemoteEntry(
               path: '/albums/',
               name: 'albums',
               isDirectory: true,
             ),
           ],
           '/albums/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/nested.png',
               name: 'nested.png',
               isDirectory: false,
             ),
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/notes.txt',
               name: 'notes.txt',
               isDirectory: false,
@@ -210,13 +259,14 @@ void main() {
         },
       );
 
-      final service = NextcloudSyncService.fromPublicLink(
+      final service = WebDavSyncService.fromPublicLink(
         'https://cloud.example.com/s/abc123',
         storageProvider,
         clientFactory: ({
           required String webDavUrl,
           required String user,
           required String password,
+          bool allowInvalidCertificate = false,
         }) => client,
       );
 
@@ -238,20 +288,20 @@ void main() {
         final existingFile = File('${tempDir.path}/already-here.jpg');
         await existingFile.writeAsString('existing');
 
-        final client = FakeNextcloudRemoteClient(
+        final client = FakeWebDavRemoteClient(
           directories: {
             '/': const [
-              NextcloudRemoteEntry(
+              WebDavRemoteEntry(
                 path: '/already-here.jpg',
                 name: 'already-here.jpg',
                 isDirectory: false,
               ),
-              NextcloudRemoteEntry(
+              WebDavRemoteEntry(
                 path: '/first.jpg',
                 name: 'first.jpg',
                 isDirectory: false,
               ),
-              NextcloudRemoteEntry(
+              WebDavRemoteEntry(
                 path: '/second.jpg',
                 name: 'second.jpg',
                 isDirectory: false,
@@ -260,20 +310,21 @@ void main() {
           },
         );
 
-        final service = NextcloudSyncService.fromPublicLink(
+        final service = WebDavSyncService.fromPublicLink(
           'https://cloud.example.com/s/abc123',
           storageProvider,
           clientFactory: ({
             required String webDavUrl,
             required String user,
             required String password,
+            bool allowInvalidCertificate = false,
           }) => client,
         );
 
         final recordedMessages = <String>[];
         Logger.root.level = Level.ALL;
         final subscription = Logger.root.onRecord.listen((record) {
-          if (record.loggerName == 'NextcloudSyncService') {
+          if (record.loggerName == 'WebDavSyncService') {
             recordedMessages.add(record.message);
           }
         });
@@ -295,34 +346,34 @@ void main() {
       });
 
     test('sync only downloads images from selected folders', () async {
-      final client = FakeNextcloudRemoteClient(
+      final client = FakeWebDavRemoteClient(
         directories: {
           '/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/root.jpg',
               name: 'root.jpg',
               isDirectory: false,
             ),
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/',
               name: 'albums',
               isDirectory: true,
             ),
           ],
           '/albums/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/pick-me.jpg',
               name: 'pick-me.jpg',
               isDirectory: false,
             ),
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/sub/',
               name: 'sub',
               isDirectory: true,
             ),
           ],
           '/albums/sub/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/sub/skip-me.jpg',
               name: 'skip-me.jpg',
               isDirectory: false,
@@ -331,17 +382,18 @@ void main() {
         },
       );
 
-      final service = NextcloudSyncService.fromPublicLink(
+      final service = WebDavSyncService.fromPublicLink(
         'https://cloud.example.com/s/abc123',
         storageProvider,
         clientFactory: ({
           required String webDavUrl,
           required String user,
           required String password,
+          bool allowInvalidCertificate = false,
         }) => client,
-        sourceConfig: const NextcloudSourceConfig(
+        sourceConfig: const WebDavSourceConfig(
           url: 'https://cloud.example.com/s/abc123',
-          folderSyncMode: NextcloudFolderSyncMode.selectedFolders,
+          folderSyncMode: WebDavFolderSyncMode.selectedFolders,
           selectedFolders: ['albums'],
         ),
       );
@@ -363,17 +415,17 @@ void main() {
       final orphanRootFile = File('${tempDir.path}/root.jpg');
       await orphanRootFile.writeAsString('orphan-root');
 
-      final client = FakeNextcloudRemoteClient(
+      final client = FakeWebDavRemoteClient(
         directories: {
           '/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/',
               name: 'albums',
               isDirectory: true,
             ),
           ],
           '/albums/': const [
-            NextcloudRemoteEntry(
+            WebDavRemoteEntry(
               path: '/albums/keep.jpg',
               name: 'keep.jpg',
               isDirectory: false,
@@ -382,13 +434,14 @@ void main() {
         },
       );
 
-      final service = NextcloudSyncService.fromPublicLink(
+      final service = WebDavSyncService.fromPublicLink(
         'https://cloud.example.com/s/abc123',
         storageProvider,
         clientFactory: ({
           required String webDavUrl,
           required String user,
           required String password,
+          bool allowInvalidCertificate = false,
         }) => client,
       );
 

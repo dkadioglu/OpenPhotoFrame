@@ -157,6 +157,33 @@ class AppLocalizationsDe extends AppLocalizations {
   String get nextcloudUrlHint => 'https://cloud.example.com/s/abc123';
 
   @override
+  String get webdavAuthPublicShare => 'Öffentliche Freigabe';
+
+  @override
+  String get webdavAuthLogin => 'WebDAV-Login';
+
+  @override
+  String get webdavUrlLabel => 'WebDAV-URL';
+
+  @override
+  String get webdavUrlHint =>
+      'https://cloud.example.com/remote.php/dav/files/user/';
+
+  @override
+  String get webdavUsername => 'Benutzername';
+
+  @override
+  String get webdavPassword => 'Passwort';
+
+  @override
+  String get webdavAllowInvalidCertificate =>
+      'Ungültiges Zertifikat akzeptieren';
+
+  @override
+  String get webdavAllowInvalidCertificateWarning =>
+      'Unsicher: nur für selbstsignierte Zertifikate in vertrauenswürdigen Netzwerken.';
+
+  @override
   String get testConnection => 'Verbindung testen';
 
   @override
@@ -197,6 +224,17 @@ class AppLocalizationsDe extends AppLocalizations {
       'Bilder direkt im freigegebenen Root-Ordner';
 
   @override
+  String nextcloudFolderPhotoCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Bilder',
+      one: '1 Bild',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String nextcloudFoldersLoadError(String error) {
     return 'Fehler beim Laden der Ordner: $error';
   }
@@ -225,8 +263,51 @@ class AppLocalizationsDe extends AppLocalizations {
       'Synchronisation erfolgreich abgeschlossen!';
 
   @override
+  String get syncCancelled => 'Synchronisation abgebrochen.';
+
+  @override
   String syncError(String error) {
     return 'Fehler: $error';
+  }
+
+  @override
+  String get nextcloudErrorInvalidShareLink =>
+      'Der Nextcloud-Freigabelink ist nicht mehr gültig.';
+
+  @override
+  String get nextcloudErrorShareInaccessible =>
+      'Die Nextcloud-Freigabe ist nicht mehr erreichbar.';
+
+  @override
+  String get nextcloudErrorConnectionTimeout =>
+      'Die Verbindung zu Nextcloud ist in ein Timeout gelaufen.';
+
+  @override
+  String get nextcloudErrorConnectionFailed =>
+      'Verbindung zu Nextcloud fehlgeschlagen. Bitte Internetverbindung und Freigabelink prüfen.';
+
+  @override
+  String get nextcloudErrorDownloadStalled =>
+      'Der Download wurde nach 15 Minuten ohne Datenempfang abgebrochen.';
+
+  @override
+  String get nextcloudErrorInvalidUrlEmpty => 'URL ist leer.';
+
+  @override
+  String get nextcloudErrorInvalidUrlScheme =>
+      'Ungültiges URL-Schema. Bitte http oder https verwenden.';
+
+  @override
+  String get nextcloudErrorInvalidUrlNoHost => 'Ungültige URL. Host fehlt.';
+
+  @override
+  String nextcloudErrorInvalidUrlFormat(String error) {
+    return 'Ungültiges URL-Format: $error';
+  }
+
+  @override
+  String nextcloudErrorUnknown(String error) {
+    return 'Nextcloud-Synchronisation fehlgeschlagen: $error';
   }
 
   @override
@@ -328,6 +409,51 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get notificationPermissionRequired =>
       'Benachrichtigungs-Berechtigung wird für \'App am Laufen halten\' benötigt';
+
+  @override
+  String get autoUpdateTitle => 'Automatische Updates';
+
+  @override
+  String get autoUpdateSubtitle =>
+      'Auf GitHub nach neuen Versionen suchen und installieren';
+
+  @override
+  String get autoUpdateFdroidNote =>
+      'Nur für Installationen über GitHub. Wenn du die App über F-Droid installiert hast, lass dies aus und aktualisiere über F-Droid.';
+
+  @override
+  String get autoUpdateSilentTitle => 'Ohne Rückfrage installieren';
+
+  @override
+  String get autoUpdateSilentSubtitle =>
+      'Device Owner erkannt: Updates können lautlos im Hintergrund installiert werden.';
+
+  @override
+  String get autoUpdatePromptNote =>
+      'Wenn ein Update verfügbar ist, wirst du vor der Installation gefragt.';
+
+  @override
+  String get autoUpdateCheckNow => 'Jetzt prüfen';
+
+  @override
+  String get autoUpdateUpToDate => 'Du bist auf dem neuesten Stand.';
+
+  @override
+  String get updateAvailableTitle => 'Update verfügbar';
+
+  @override
+  String updateAvailableMessage(String version) {
+    return 'Version $version ist verfügbar. Jetzt herunterladen und installieren?';
+  }
+
+  @override
+  String get updateDownloading => 'Wird heruntergeladen…';
+
+  @override
+  String get updateSkip => 'Überspringen';
+
+  @override
+  String get updateDownloadInstall => 'Herunterladen & installieren';
 
   @override
   String get keepAliveDialogTitle => 'App am Laufen halten';

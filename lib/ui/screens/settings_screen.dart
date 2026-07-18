@@ -9,10 +9,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../domain/interfaces/config_provider.dart';
 import '../../domain/interfaces/photo_repository.dart';
+import '../../domain/interfaces/storage_provider.dart';
+import '../../domain/interfaces/sync_provider.dart';
 import '../../infrastructure/repositories/hybrid_photo_repository.dart';
 import '../../infrastructure/services/photo_service.dart';
-import '../../infrastructure/services/nextcloud_source_config.dart';
-import '../../infrastructure/services/nextcloud_sync_service.dart';
+import '../../infrastructure/services/native_updater_service.dart';
+import '../../infrastructure/services/update_service.dart';
+import '../../infrastructure/services/webdav_source_config.dart';
+import '../../infrastructure/services/webdav_sync_service.dart';
 import '../../infrastructure/services/autostart_service.dart';
 import '../../infrastructure/services/native_screen_control_service.dart';
 import '../../infrastructure/services/keep_alive_service.dart';
@@ -44,10 +48,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   late bool _blurBorders;
   late String _syncType;
   late TextEditingController _nextcloudUrlController;
+  late WebDavAuthMode _webdavAuthMode;
+  late TextEditingController _webdavUserController;
+  late TextEditingController _webdavPasswordController;
+  late bool _webdavAllowInvalidCertificate;
   late int _syncIntervalMinutes;
   late bool _deleteOrphanedFiles;
   late bool _autostartOnBoot;
   late bool _keepAliveEnabled;
+  late bool _autoUpdateEnabled;
+  late bool _autoUpdateSilent;
+  bool _isDeviceOwner = false;
   
   // Clock settings
   late bool _showClock;
@@ -72,17 +83,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   
   // Screen orientation setting
   late String _screenOrientation;
-  
-  bool _isSyncing = false;
-  String? _syncStatus;
-  
+
   bool _isTestingConnection = false;
   String? _connectionTestResult;
   bool? _connectionTestSuccess;
 
-  late NextcloudFolderSyncMode _nextcloudFolderSyncMode;
+  late WebDavFolderSyncMode _nextcloudFolderSyncMode;
   late Set<String> _selectedNextcloudFolders;
-  List<NextcloudFolder> _availableNextcloudFolders = [];
+  List<WebDavFolder> _availableNextcloudFolders = [];
+  // Number of locally synced images per folder path (relative). Used to show
+  // "synced / total" in the picker.
+  Map<String, int> _localFolderImageCounts = const {};
   bool _isLoadingNextcloudFolders = false;
   String? _nextcloudFolderLoadError;
   
@@ -98,7 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   
   // Track original values to detect changes
   late String _originalSyncType;
-  late NextcloudSourceConfig _originalNextcloudSourceConfig;
+  late WebDavSourceConfig _originalWebDavSourceConfig;
   
   @override
   void initState() {
@@ -126,6 +137,16 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     _deleteOrphanedFiles = config.deleteOrphanedFiles;
     _autostartOnBoot = config.autostartOnBoot;
     _keepAliveEnabled = config.keepAliveEnabled;
+    _autoUpdateEnabled = config.autoUpdateEnabled;
+    _autoUpdateSilent = config.autoUpdateSilent;
+    if (Platform.isAndroid) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final isOwner = await NativeUpdaterService.isDeviceOwner();
+        if (mounted) {
+          setState(() => _isDeviceOwner = isOwner);
+        }
+      });
+    }
     _showClock = config.showClock;
     _clockSize = config.clockSize;
     _clockPosition = config.clockPosition;
@@ -159,18 +180,43 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     // Check Device Admin status
     _checkDeviceAdmin();
     
-    final nextcloudConfig = NextcloudSourceConfig.fromMap(
+    final nextcloudConfig = WebDavSourceConfig.fromMap(
       config.getSourceConfig('nextcloud_link'),
     );
     _nextcloudUrlController = TextEditingController(
       text: nextcloudConfig.url,
     );
+    _webdavAuthMode = nextcloudConfig.authMode;
+    _webdavUserController = TextEditingController(text: nextcloudConfig.username);
+    _webdavPasswordController = TextEditingController(
+      text: nextcloudConfig.password,
+    );
+    _webdavAllowInvalidCertificate = nextcloudConfig.allowInvalidCertificate;
     _nextcloudFolderSyncMode = nextcloudConfig.folderSyncMode;
     _selectedNextcloudFolders = {...nextcloudConfig.normalizedSelectedFolders};
+    // Restore the cached folder tree so the picker renders offline (no connection).
+    // Fall back to the already-selected folders for configs saved before the
+    // cache existed, so previously subscribed folders still show up offline.
+    final cachedFileCounts = <String, int>{
+      for (final folder in nextcloudConfig.cachedFolders)
+        WebDavSourceConfig.normalizeFolderPath(folder.path): folder.fileCount,
+    };
+    final knownFolderPaths = <String>{
+      ...cachedFileCounts.keys,
+      ..._selectedNextcloudFolders,
+    };
+    _availableNextcloudFolders = (knownFolderPaths.toList()..sort())
+        .map(
+          (path) => WebDavFolder.fromPath(
+            path,
+            fileCount: cachedFileCounts[path] ?? 0,
+          ),
+        )
+        .toList(growable: false);
     
     // Store original values for comparison on save
     _originalSyncType = _syncType;
-    _originalNextcloudSourceConfig = nextcloudConfig;
+    _originalWebDavSourceConfig = nextcloudConfig;
     
     // Load saved album selection for device_photos mode
     final devicePhotosConfig = config.getSourceConfig('device_photos');
@@ -186,8 +232,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
 
     if (_syncType == 'nextcloud_link' &&
         nextcloudConfig.url.isNotEmpty &&
-        _nextcloudFolderSyncMode == NextcloudFolderSyncMode.selectedFolders) {
+        _nextcloudFolderSyncMode == WebDavFolderSyncMode.selectedFolders) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        _refreshLocalFolderImageCounts();
         _loadAvailableNextcloudFolders();
       });
     }
@@ -237,6 +284,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _nextcloudUrlController.dispose();
+    _webdavUserController.dispose();
+    _webdavPasswordController.dispose();
     super.dispose();
   }
   
@@ -253,11 +302,11 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     
     // Detect if sync configuration changed
     final newNextcloudUrl = _nextcloudUrlController.text.trim();
-    final newNextcloudSourceConfig = _buildNextcloudSourceConfig(
+    final newWebDavSourceConfig = _buildWebDavSourceConfig(
       url: newNextcloudUrl,
     );
     final nextcloudConfigChanged =
-      !_nextcloudConfigsEqual(newNextcloudSourceConfig, _originalNextcloudSourceConfig);
+      !_nextcloudConfigsEqual(newWebDavSourceConfig, _originalWebDavSourceConfig);
     final syncConfigChanged =
       _syncType != _originalSyncType ||
       (_syncType == 'nextcloud_link' && nextcloudConfigChanged);
@@ -282,6 +331,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     config.deleteOrphanedFiles = _deleteOrphanedFiles;
     config.autostartOnBoot = _autostartOnBoot;
     config.keepAliveEnabled = _keepAliveEnabled;
+    config.autoUpdateEnabled = _autoUpdateEnabled;
+    config.autoUpdateSilent = _autoUpdateSilent;
     config.showClock = _showClock;
     config.clockSize = _clockSize;
     config.clockPosition = _clockPosition;
@@ -313,7 +364,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     await KeepAliveService.setEnabled(_keepAliveEnabled);
     
     if (_syncType == 'nextcloud_link') {
-      config.setSourceConfig('nextcloud_link', newNextcloudSourceConfig.toMap());
+      config.setSourceConfig('nextcloud_link', newWebDavSourceConfig.toMap());
     }
     
     await config.save();
@@ -591,7 +642,10 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                 setState(() => _keepAliveEnabled = value);
               },
             ),
-            
+
+            const SizedBox(height: 8),
+            _buildAutoUpdateSection(),
+
             const SizedBox(height: 24),
             const Divider(),
             const SizedBox(height: 16),
@@ -620,6 +674,78 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     );
   }
   
+  Widget _buildAutoUpdateSection() {
+    final l10n = AppLocalizations.of(context)!;
+    final hintColor = Theme.of(context).colorScheme.onSurfaceVariant;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          title: Text(l10n.autoUpdateTitle),
+          subtitle: Text(l10n.autoUpdateSubtitle),
+          secondary: const Icon(Icons.system_update),
+          value: _autoUpdateEnabled,
+          onChanged: (value) {
+            setState(() {
+              _autoUpdateEnabled = value;
+              if (!value) _autoUpdateSilent = false;
+            });
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            l10n.autoUpdateFdroidNote,
+            style: TextStyle(fontSize: 12, color: hintColor),
+          ),
+        ),
+        if (_autoUpdateEnabled) ...[
+          if (_isDeviceOwner)
+            CheckboxListTile(
+              title: Text(l10n.autoUpdateSilentTitle),
+              subtitle: Text(l10n.autoUpdateSilentSubtitle),
+              value: _autoUpdateSilent,
+              onChanged: (value) =>
+                  setState(() => _autoUpdateSilent = value ?? false),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                l10n.autoUpdatePromptNote,
+                style: TextStyle(fontSize: 12, color: hintColor),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: OutlinedButton.icon(
+              onPressed: _checkForUpdateNow,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: Text(l10n.autoUpdateCheckNow),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _checkForUpdateNow() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final service = context.read<UpdateService>();
+    // Persist the toggles so the service sees the current configuration.
+    await _saveSettings();
+    final info = await service.checkForUpdate(manual: true);
+    if (!mounted) return;
+    if (info == null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.autoUpdateUpToDate)),
+      );
+    }
+    // If an update is found, the service shows the prompt via onUpdateAvailable.
+  }
+
   Widget _buildSectionHeader(String title) {
     return Text(
       title,
@@ -983,13 +1109,40 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          SegmentedButton<WebDavAuthMode>(
+            segments: [
+              ButtonSegment(
+                value: WebDavAuthMode.publicShare,
+                label: Text(localizations.webdavAuthPublicShare),
+              ),
+              ButtonSegment(
+                value: WebDavAuthMode.userPassword,
+                label: Text(localizations.webdavAuthLogin),
+              ),
+            ],
+            selected: {_webdavAuthMode},
+            onSelectionChanged: (selection) {
+              setState(() {
+                _webdavAuthMode = selection.first;
+                _connectionTestResult = null;
+                _connectionTestSuccess = null;
+                _availableNextcloudFolders = [];
+                _nextcloudFolderLoadError = null;
+              });
+            },
+          ),
+          const SizedBox(height: 12),
           TextField(
             controller: _nextcloudUrlController,
             decoration: InputDecoration(
-              labelText: AppLocalizations.of(context)!.nextcloudPublicShareUrl,
-              hintText: AppLocalizations.of(context)!.nextcloudUrlHint,
-              prefixIcon: Icon(Icons.link),
-              border: OutlineInputBorder(),
+              labelText: _webdavAuthMode == WebDavAuthMode.userPassword
+                  ? localizations.webdavUrlLabel
+                  : localizations.nextcloudPublicShareUrl,
+              hintText: _webdavAuthMode == WebDavAuthMode.userPassword
+                  ? localizations.webdavUrlHint
+                  : localizations.nextcloudUrlHint,
+              prefixIcon: const Icon(Icons.link),
+              border: const OutlineInputBorder(),
             ),
             keyboardType: TextInputType.url,
             onChanged: (_) {
@@ -998,6 +1151,57 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                 _connectionTestSuccess = null;
                 _availableNextcloudFolders = [];
                 _nextcloudFolderLoadError = null;
+              });
+            },
+          ),
+          if (_webdavAuthMode == WebDavAuthMode.userPassword) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: _webdavUserController,
+              decoration: InputDecoration(
+                labelText: localizations.webdavUsername,
+                prefixIcon: const Icon(Icons.person),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                setState(() {
+                  _connectionTestResult = null;
+                  _connectionTestSuccess = null;
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _webdavPasswordController,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: localizations.webdavPassword,
+                prefixIcon: const Icon(Icons.lock),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                setState(() {
+                  _connectionTestResult = null;
+                  _connectionTestSuccess = null;
+                });
+              },
+            ),
+          ],
+          const SizedBox(height: 4),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: _webdavAllowInvalidCertificate,
+            title: Text(localizations.webdavAllowInvalidCertificate),
+            subtitle: Text(
+              localizations.webdavAllowInvalidCertificateWarning,
+              style: const TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+            onChanged: (value) {
+              setState(() {
+                _webdavAllowInvalidCertificate = value ?? false;
+                _connectionTestResult = null;
+                _connectionTestSuccess = null;
               });
             },
           ),
@@ -1036,10 +1240,10 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
             ),
           ],
           const SizedBox(height: 16),
-          RadioListTile<NextcloudFolderSyncMode>(
+          RadioListTile<WebDavFolderSyncMode>(
             title: Text(localizations.syncAllNextcloudFolders),
             subtitle: Text(localizations.syncAllNextcloudFoldersSubtitle),
-            value: NextcloudFolderSyncMode.all,
+            value: WebDavFolderSyncMode.all,
             groupValue: _nextcloudFolderSyncMode,
             onChanged: (value) {
               if (value == null) {
@@ -1050,10 +1254,10 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
               });
             },
           ),
-          RadioListTile<NextcloudFolderSyncMode>(
+          RadioListTile<WebDavFolderSyncMode>(
             title: Text(localizations.syncSelectedNextcloudFolders),
             subtitle: Text(localizations.syncSelectedNextcloudFoldersSubtitle),
-            value: NextcloudFolderSyncMode.selectedFolders,
+            value: WebDavFolderSyncMode.selectedFolders,
             groupValue: _nextcloudFolderSyncMode,
             onChanged: (value) {
               if (value == null) {
@@ -1067,16 +1271,16 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
               });
             },
           ),
-          if (_nextcloudFolderSyncMode == NextcloudFolderSyncMode.selectedFolders) ...[
+          if (_nextcloudFolderSyncMode == WebDavFolderSyncMode.selectedFolders) ...[
             const SizedBox(height: 8),
-            _buildNextcloudFolderSelection(),
+            _buildWebDavFolderSelection(),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildNextcloudFolderSelection() {
+  Widget _buildWebDavFolderSelection() {
     final localizations = AppLocalizations.of(context)!;
 
     return Column(
@@ -1142,6 +1346,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                   subtitle: folder.path.isEmpty
                       ? Text(localizations.nextcloudShareRootSubtitle)
                       : null,
+                  secondary: _buildFolderSyncBadge(folder),
                   onChanged: (value) {
                     setState(() {
                       if (value ?? false) {
@@ -1167,15 +1372,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       _connectionTestSuccess = null;
     });
     
-    final error = await NextcloudSyncService.testConnection(
-      _nextcloudUrlController.text.trim(),
+    final error = await WebDavSyncService.testConnection(
+      _buildWebDavSourceConfig(url: _nextcloudUrlController.text.trim()),
     );
     
     if (mounted) {
       setState(() {
         _isTestingConnection = false;
         _connectionTestSuccess = error == null;
-        _connectionTestResult = error ?? AppLocalizations.of(context)!.connectionSuccessful;
+        _connectionTestResult = error == null
+            ? AppLocalizations.of(context)!.connectionSuccessful
+            : _localizeNextcloudError(error);
       });
     }
   }
@@ -1184,7 +1391,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     final publicLink = _nextcloudUrlController.text.trim();
     if (publicLink.isEmpty) {
       setState(() {
-        _nextcloudFolderLoadError = 'URL is empty';
+        _nextcloudFolderLoadError = AppLocalizations.of(context)!.nextcloudErrorInvalidUrlEmpty;
         _availableNextcloudFolders = [];
       });
       return;
@@ -1196,7 +1403,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     });
 
     try {
-      final folders = await NextcloudSyncService.listAvailableFolders(publicLink);
+      final folders = await WebDavSyncService.listAvailableFolders(
+        _buildWebDavSourceConfig(url: publicLink),
+      );
       final availablePaths = folders.map((folder) => folder.path).toSet();
 
       if (!mounted) {
@@ -1215,8 +1424,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       }
 
       setState(() {
-        _nextcloudFolderLoadError = e.toString();
-        _availableNextcloudFolders = [];
+        _nextcloudFolderLoadError = _localizeNextcloudError(e);
+        // Keep the cached folder tree visible so the picker still works offline.
       });
     } finally {
       if (mounted) {
@@ -1227,22 +1436,122 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     }
   }
 
-  NextcloudSourceConfig _buildNextcloudSourceConfig({required String url}) {
-    return NextcloudSourceConfig(
-      url: url,
+  /// Trailing badge for a folder row: "synced / total" with a check mark once
+  /// every image in that folder is present locally.
+  Widget _buildFolderSyncBadge(WebDavFolder folder) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final total = folder.fileCount;
+    final rawLocal = _localFolderImageCounts[folder.path] ?? 0;
+    final local = total > 0 ? rawLocal.clamp(0, total) : rawLocal;
+    final fullySynced = total > 0 && local >= total;
+    final label = total > 0 ? '$local / $total' : '$rawLocal';
+    final color = fullySynced ? Colors.green : colorScheme.onSurfaceVariant;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          fullySynced ? Icons.check_circle : Icons.cloud_download_outlined,
+          size: 14,
+          color: color,
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12, color: color)),
+      ],
+    );
+  }
+
+  /// Counts the locally synced images per folder so the picker can show
+  /// "synced / total". Reads the local photo directory (works offline).
+  Future<void> _refreshLocalFolderImageCounts() async {
+    final storage = context.read<StorageProvider>();
+    try {
+      final dir = await storage.getPhotoDirectory();
+      final counts = <String, int>{};
+      if (await dir.exists()) {
+        final prefixLength = dir.path.endsWith('/')
+            ? dir.path.length
+            : dir.path.length + 1;
+        await for (final entity
+            in dir.list(recursive: true, followLinks: false)) {
+          if (entity is! File) {
+            continue;
+          }
+          final name = entity.path.split('/').last;
+          if (name.endsWith('.part') || !_isImageFileName(name)) {
+            continue;
+          }
+          final relativePath = entity.path.length > prefixLength
+              ? entity.path.substring(prefixLength)
+              : '';
+          final folder = WebDavSourceConfig.parentDirectoryOf(relativePath);
+          counts[folder] = (counts[folder] ?? 0) + 1;
+        }
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() => _localFolderImageCounts = counts);
+    } catch (_) {
+      // Local counts are a nice-to-have; ignore failures (e.g. missing dir).
+    }
+  }
+
+  bool _isImageFileName(String name) {
+    final lower = name.toLowerCase();
+    return lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.webp');
+  }
+
+  WebDavSourceConfig _buildWebDavSourceConfig({required String url}) {
+    var resolvedUrl = url;
+    var username = _webdavUserController.text.trim();
+    var password = _webdavPasswordController.text;
+
+    if (_webdavAuthMode == WebDavAuthMode.userPassword) {
+      // Accept an inline `user:pass@host` URL; explicit fields take priority.
+      final split = WebDavSourceConfig.splitInlineCredentials(url);
+      resolvedUrl = split.url;
+      if (username.isEmpty && split.username != null) username = split.username!;
+      if (password.isEmpty && split.password != null) password = split.password!;
+    }
+
+    final isUserPassword = _webdavAuthMode == WebDavAuthMode.userPassword;
+    return WebDavSourceConfig(
+      url: resolvedUrl,
+      authMode: _webdavAuthMode,
+      username: isUserPassword ? username : '',
+      password: isUserPassword ? password : '',
+      allowInvalidCertificate: _webdavAllowInvalidCertificate,
       folderSyncMode: _nextcloudFolderSyncMode,
       selectedFolders: _selectedNextcloudFolders.toList()..sort(),
+      cachedFolders: _availableNextcloudFolders
+          .map(
+            (folder) => CachedWebDavFolder(
+              path: folder.path,
+              fileCount: folder.fileCount,
+            ),
+          )
+          .toList(),
     );
   }
 
   bool _nextcloudConfigsEqual(
-    NextcloudSourceConfig left,
-    NextcloudSourceConfig right,
+    WebDavSourceConfig left,
+    WebDavSourceConfig right,
   ) {
     final leftFolders = left.normalizedSelectedFolders.toList()..sort();
     final rightFolders = right.normalizedSelectedFolders.toList()..sort();
 
-    if (left.url != right.url || left.folderSyncMode != right.folderSyncMode) {
+    if (left.url != right.url ||
+        left.authMode != right.authMode ||
+        left.username != right.username ||
+        left.password != right.password ||
+        left.allowInvalidCertificate != right.allowInvalidCertificate ||
+        left.folderSyncMode != right.folderSyncMode) {
       return false;
     }
 
@@ -1299,36 +1608,166 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Widget _buildSyncNowButton() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Consumer<PhotoService>(
+        builder: (context, photoService, _) {
+          final syncProgress = photoService.syncProgress;
+          final isSyncing = photoService.isSyncing;
+          final progressValue = syncProgress?.fraction;
+          final progressLabel = syncProgress?.counterLabel;
+          final statusText = _localizeSyncStatus(photoService.syncStatus);
+          final statusIsError = photoService.syncStatus?.kind == SyncStatusKind.error;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (isSyncing) ...[
+                _buildSyncProgressIndicator(
+                  progressValue: progressValue,
+                  label: progressLabel ?? AppLocalizations.of(context)!.syncing,
+                ),
+                if (syncProgress != null && syncProgress.folders.length > 1)
+                  _buildSyncFolderBreakdown(syncProgress.folders),
+              ] else
+                ElevatedButton.icon(
+                  onPressed: _triggerSync,
+                  icon: const Icon(Icons.sync),
+                  label: Text(AppLocalizations.of(context)!.syncNow),
+                ),
+              if (statusText != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  statusText,
+                  style: TextStyle(
+                    color: statusIsError ? Colors.red : Colors.green,
+                    fontSize: 12,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSyncProgressIndicator({
+    required double? progressValue,
+    required String label,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return SizedBox(
+      height: 48,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            LinearProgressIndicator(
+              value: progressValue,
+              backgroundColor: colorScheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
+            ),
+            Center(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: colorScheme.onPrimary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSyncFolderBreakdown(List<SyncFolderProgress> folders) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ElevatedButton.icon(
-            onPressed: _isSyncing ? null : _triggerSync,
-            icon: _isSyncing 
-                ? const SizedBox(
-                    width: 20, 
-                    height: 20, 
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.sync),
-            label: Text(_isSyncing ? AppLocalizations.of(context)!.syncing : AppLocalizations.of(context)!.syncNow),
-          ),
-          if (_syncStatus != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _syncStatus!,
-              style: TextStyle(
-                color: _syncStatus!.contains('Error') 
-                    ? Colors.red 
-                    : Colors.green,
-                fontSize: 12,
+          for (final folder in folders)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      folder.folderPath.isEmpty
+                          ? l10n.nextcloudShareRoot
+                          : folder.folderPath,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    folder.counterLabel,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: folder.completedFiles >= folder.totalFiles
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
-              textAlign: TextAlign.center,
             ),
-          ],
         ],
       ),
     );
+  }
+
+  String? _localizeSyncStatus(SyncStatus? status) {
+    final l10n = AppLocalizations.of(context)!;
+    if (status == null) {
+      return null;
+    }
+
+    return switch (status.kind) {
+      SyncStatusKind.success => l10n.syncCompletedSuccessfully,
+      SyncStatusKind.cancelled => l10n.syncCancelled,
+      SyncStatusKind.error => l10n.syncError(
+        _localizeNextcloudError(status.error),
+      ),
+    };
+  }
+
+  String _localizeNextcloudError(Object? error) {
+    final l10n = AppLocalizations.of(context)!;
+    if (error is WebDavSyncException) {
+      return switch (error.code) {
+        WebDavSyncErrorCode.invalidShareLink =>
+          l10n.nextcloudErrorInvalidShareLink,
+        WebDavSyncErrorCode.shareInaccessible =>
+          l10n.nextcloudErrorShareInaccessible,
+        WebDavSyncErrorCode.connectionTimeout =>
+          l10n.nextcloudErrorConnectionTimeout,
+        WebDavSyncErrorCode.connectionFailed =>
+          l10n.nextcloudErrorConnectionFailed,
+        WebDavSyncErrorCode.downloadStalled =>
+          l10n.nextcloudErrorDownloadStalled,
+        WebDavSyncErrorCode.invalidUrlEmpty =>
+          l10n.nextcloudErrorInvalidUrlEmpty,
+        WebDavSyncErrorCode.invalidUrlScheme =>
+          l10n.nextcloudErrorInvalidUrlScheme,
+        WebDavSyncErrorCode.invalidUrlNoHost =>
+          l10n.nextcloudErrorInvalidUrlNoHost,
+        WebDavSyncErrorCode.invalidUrlFormat =>
+          l10n.nextcloudErrorInvalidUrlFormat(error.details ?? ''),
+        WebDavSyncErrorCode.unknown =>
+          l10n.nextcloudErrorUnknown(error.details ?? error.cause?.toString() ?? ''),
+      };
+    }
+
+    return l10n.nextcloudErrorUnknown(error?.toString() ?? '');
   }
   
   Widget _buildLastSyncInfo() {
@@ -1580,35 +2019,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     // First save the current settings
     await _saveSettings();
     
-    setState(() {
-      _isSyncing = true;
-      _syncStatus = null;
-    });
-    
     try {
       final photoService = context.read<PhotoService>();
       
       // Use centralized sync via PhotoService
       // This handles cancellation of running syncs and uses current config
       await photoService.triggerSync();
-      
-      if (mounted) {
-        setState(() {
-          _syncStatus = AppLocalizations.of(context)!.syncCompletedSuccessfully;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _syncStatus = AppLocalizations.of(context)!.syncError(e.toString());
-        });
-      }
+    } catch (_) {
+      // PhotoService already exposes the sync result for the UI.
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSyncing = false;
-        });
-      }
+      // Refresh the per-folder "synced / total" counts after the sync.
+      await _refreshLocalFolderImageCounts();
     }
   }
   

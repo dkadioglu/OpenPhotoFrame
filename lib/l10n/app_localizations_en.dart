@@ -155,6 +155,32 @@ class AppLocalizationsEn extends AppLocalizations {
   String get nextcloudUrlHint => 'https://cloud.example.com/s/abc123';
 
   @override
+  String get webdavAuthPublicShare => 'Public share';
+
+  @override
+  String get webdavAuthLogin => 'WebDAV login';
+
+  @override
+  String get webdavUrlLabel => 'WebDAV URL';
+
+  @override
+  String get webdavUrlHint =>
+      'https://cloud.example.com/remote.php/dav/files/user/';
+
+  @override
+  String get webdavUsername => 'Username';
+
+  @override
+  String get webdavPassword => 'Password';
+
+  @override
+  String get webdavAllowInvalidCertificate => 'Accept invalid certificate';
+
+  @override
+  String get webdavAllowInvalidCertificateWarning =>
+      'Insecure: only for self-signed certificates on trusted networks.';
+
+  @override
   String get testConnection => 'Test Connection';
 
   @override
@@ -195,6 +221,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'Images directly in the shared root folder';
 
   @override
+  String nextcloudFolderPhotoCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count photos',
+      one: '1 photo',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String nextcloudFoldersLoadError(String error) {
     return 'Error loading folders: $error';
   }
@@ -222,8 +259,51 @@ class AppLocalizationsEn extends AppLocalizations {
   String get syncCompletedSuccessfully => 'Sync completed successfully!';
 
   @override
+  String get syncCancelled => 'Sync cancelled.';
+
+  @override
   String syncError(String error) {
     return 'Error: $error';
+  }
+
+  @override
+  String get nextcloudErrorInvalidShareLink =>
+      'The Nextcloud share link is no longer valid.';
+
+  @override
+  String get nextcloudErrorShareInaccessible =>
+      'The Nextcloud share is no longer accessible.';
+
+  @override
+  String get nextcloudErrorConnectionTimeout =>
+      'Connection to Nextcloud timed out.';
+
+  @override
+  String get nextcloudErrorConnectionFailed =>
+      'Could not connect to Nextcloud. Check internet connection and share link.';
+
+  @override
+  String get nextcloudErrorDownloadStalled =>
+      'Download timed out after 15 minutes without receiving data.';
+
+  @override
+  String get nextcloudErrorInvalidUrlEmpty => 'URL is empty.';
+
+  @override
+  String get nextcloudErrorInvalidUrlScheme =>
+      'Invalid URL scheme. Use http or https.';
+
+  @override
+  String get nextcloudErrorInvalidUrlNoHost => 'Invalid URL. Host is missing.';
+
+  @override
+  String nextcloudErrorInvalidUrlFormat(String error) {
+    return 'Invalid URL format: $error';
+  }
+
+  @override
+  String nextcloudErrorUnknown(String error) {
+    return 'Nextcloud sync failed: $error';
   }
 
   @override
@@ -325,6 +405,51 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get notificationPermissionRequired =>
       'Notification permission is required for Keep App Running';
+
+  @override
+  String get autoUpdateTitle => 'Automatic updates';
+
+  @override
+  String get autoUpdateSubtitle =>
+      'Check GitHub for new versions and install them';
+
+  @override
+  String get autoUpdateFdroidNote =>
+      'Only for installs from GitHub. If you installed via F-Droid, leave this off and update through F-Droid.';
+
+  @override
+  String get autoUpdateSilentTitle => 'Install without confirmation';
+
+  @override
+  String get autoUpdateSilentSubtitle =>
+      'Device Owner detected: updates can be installed silently in the background.';
+
+  @override
+  String get autoUpdatePromptNote =>
+      'When an update is available, you\'ll be asked before it is installed.';
+
+  @override
+  String get autoUpdateCheckNow => 'Check now';
+
+  @override
+  String get autoUpdateUpToDate => 'You\'re up to date.';
+
+  @override
+  String get updateAvailableTitle => 'Update available';
+
+  @override
+  String updateAvailableMessage(String version) {
+    return 'Version $version is available. Download and install it now?';
+  }
+
+  @override
+  String get updateDownloading => 'Downloading…';
+
+  @override
+  String get updateSkip => 'Skip';
+
+  @override
+  String get updateDownloadInstall => 'Download & install';
 
   @override
   String get keepAliveDialogTitle => 'Keep App Running';
